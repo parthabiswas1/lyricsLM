@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lyricsLM — a GPT trained on free verse</title>
+<meta name="description" content="A 2.7M-parameter transformer, built from scratch and trained on Tagore, Naidu, Dickinson and Poe. Runs entirely in your browser. No server, no API key.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div class="page">
+
+  <header class="topbar">
+    <a class="brand" href="index.html" style="text-decoration:none;">
+      <span class="brand-mark">lyricsLM</span>
+      <span class="brand-tag">a transformer, from scratch, in your browser</span>
+    </a>
+    <a class="brand-link" href="https://github.com/YOUR-USERNAME/lyricsLM" target="_blank" rel="noopener">notebook &amp; article ↗</a>
+  </header>
+
+  <div id="demo-banner" class="banner" hidden>
+    Demo mode — these are randomly initialised placeholder weights, not a trained model.
+    Swap in your exported checkpoints (see README) to hear the real thing.
+  </div>
+
+  <main class="layout">
+
+    <section class="intro">
+      <h1>Type a line.<br>Watch it become verse.</h1>
+      <p>This model read Tagore, Sarojini Naidu, Dickinson and Poe — nothing else, nothing under
+        copyright. It has 2.7 million parameters, a fraction of a fraction of a frontier model.
+        Every character it writes is computed right now, on your machine, from the checkpoint
+        you pick below. Nothing is sent anywhere.</p>
+    </section>
+
+    <section class="checkpoint-picker">
+      <div class="picker-label">Choose a moment in training</div>
+      <div id="checkpoint-tabs" class="tabs" role="tablist"></div>
+      <div id="load-progress" class="load-progress" hidden>
+        <div id="load-progress-fill" class="load-progress-fill"></div>
+      </div>
+    </section>
+
+    <section class="chat-panel">
+      <div id="chat-log" class="chat-log" aria-live="polite">
+        <div class="bubble model intro-bubble">
+          <div class="bubble-inner">Give me a line of poetry to continue — try <em>“and miles to go before I sleep”</em>, or write your own.</div>
+        </div>
+      </div>
+
+      <form id="composer" class="composer">
+        <div class="composer-row">
+          <input id="seed-input" type="text" maxlength="100" placeholder="and miles to go before I sleep" autocomplete="off">
+          <button id="send-btn" type="submit">Write →</button>
+        </div>
+        <div class="composer-row controls-row">
+          <label class="temp-control">
+            <span class="temp-name">Creativity</span>
+            <input id="temp-slider" type="range" min="0.3" max="1.6" step="0.05" value="0.8">
+            <span class="temp-readout"><span id="temp-value">0.80</span> <span class="temp-mood">neutral</span></span>
+          </label>
+        </div>
+      </form>
+
+      <div id="status-line" class="status-line">Loading…</div>
+    </section>
+
+    <section class="how-panel">
+      <h2>What's actually happening</h2>
+      <div class="how-grid">
+        <div class="how-card">
+          <span class="how-num">01</span>
+          <h3>Weights load once</h3>
+          <p>Your browser fetches the checkpoint's numbers as a flat binary file — about 11MB.
+            After that, everything runs locally.</p>
+        </div>
+        <div class="how-card">
+          <span class="how-num">02</span>
+          <h3>No server, ever</h3>
+          <p>The forward pass — embeddings, attention, softmax, sampling — is plain JavaScript
+            running on your device. There's nothing to log, nothing to send.</p>
+        </div>
+        <div class="how-card">
+          <span class="how-num">03</span>
+          <h3>Same math, three moments</h3>
+          <p>Baby, halfway and trained are the identical architecture with different numbers —
+            saved at step 0, step 1,500, and step 5,000 of the same training run.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    Built to accompany the article <em>lyricsLM: Learn How to Build a GPT From Scratch</em>.
+    Corpus: Tagore, Naidu, Kabir, Dickinson, Poe, Blake, Keats, Wordsworth — all public domain.
+  </footer>
+
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
