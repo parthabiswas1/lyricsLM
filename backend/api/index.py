@@ -117,12 +117,13 @@ def decode(nums):
     return "".join(itos[n] for n in nums)
 
 
-def generate(seed, max_new_tokens=500, temperature=0.8, min_lines=4):
+def generate(seed, max_new_tokens=800, temperature=0.8, min_lines=4):
     seed_ids = encode(seed)
     if not seed_ids:
         return ""
     idx = np.array([seed_ids], dtype=np.int64)
     lines_seen = 0
+    current_line_chars = []
     for _ in range(max_new_tokens):
         idx_cond = idx[:, -block_size:]
         logits = model_forward(idx_cond)
@@ -130,12 +131,17 @@ def generate(seed, max_new_tokens=500, temperature=0.8, min_lines=4):
         probs = softmax(logits, axis=-1)[0]
         nxt = int(np.random.choice(len(probs), p=probs))
         idx = np.concatenate([idx, np.array([[nxt]])], axis=1)
-        # Stop cleanly once we've completed at least min_lines lines,
-        # instead of cutting off mid-word at a fixed character count.
-        if itos.get(nxt) == "\n":
-            lines_seen += 1
+        ch = itos.get(nxt, "")
+        if ch == "\n":
+            # Only count lines that actually have text — blank spacer lines
+            # between stanzas shouldn't count toward the minimum.
+            if "".join(current_line_chars).strip():
+                lines_seen += 1
+            current_line_chars = []
             if lines_seen >= min_lines:
                 break
+        else:
+            current_line_chars.append(ch)
     return decode(idx[0].tolist())
 
 
