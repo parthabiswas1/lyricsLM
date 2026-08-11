@@ -1,23 +1,24 @@
 """
-lyricsLM backend — Vercel Python serverless function.
+lyricsLM backend — pure NumPy inference, no PyTorch.
 
-Reconstructs the exact PyTorch model architecture from the training
-notebook and serves POST /api/generate. Loads the trained checkpoint
-once per cold start (module-level), so warm requests are fast.
+PyTorch (even CPU-only) exceeds Vercel's 500MB function size limit
+because of bundled MKL libraries. Since this model is tiny (2.7M
+params) and we only need a forward pass (no training/autograd),
+NumPy alone is sufficient and keeps the deployed bundle under 50MB.
+
+Weights are exported from the trained PyTorch checkpoint into a
+plain .npz file (see backend_export_cell.py) — this file loads that
+directly, with no PyTorch import anywhere.
 """
 import os
 import json
-import torch
-import torch.nn as nn
-from torch.nn import functional as F
+import numpy as np
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# ---------------------------------------------------------------------
-# Load config (vocab, architecture hyperparameters) exported from Colab
-# ---------------------------------------------------------------------
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "model")
+
 with open(os.path.join(MODEL_DIR, "config.json")) as f:
     CFG = json.load(f)
 
@@ -28,95 +29,84 @@ n_layer = CFG["n_layer"]
 block_size = CFG["block_size"]
 stoi = CFG["stoi"]
 itos = {int(k): v for k, v in CFG["itos"].items()}
-dropout = 0.0  # inference only, no dropout
+head_size = n_embd // n_head
 
-device = "cpu"
-
-
-# ---------------------------------------------------------------------
-# Model — identical architecture to the training notebook
-# ---------------------------------------------------------------------
-class Head(nn.Module):
-    def __init__(self, head_size):
-        super().__init__()
-        self.key = nn.Linear(n_embd, head_size, bias=False)
-        self.query = nn.Linear(n_embd, head_size, bias=False)
-        self.value = nn.Linear(n_embd, head_size, bias=False)
-        self.register_buffer("tril", torch.tril(torch.ones(block_size, block_size)))
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        B, T, C = x.shape
-        k, q = self.key(x), self.query(x)
-        w = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5
-        w = w.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
-        w = F.softmax(w, dim=-1)
-        w = self.dropout(w)
-        return w @ self.value(x)
-
-
-class MultiHead(nn.Module):
-    def __init__(self, num_heads, head_size):
-        super().__init__()
-        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
-        self.proj = nn.Linear(n_embd, n_embd)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        out = torch.cat([h(x) for h in self.heads], dim=-1)
-        return self.dropout(self.proj(out))
-
-
-class FeedForward(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(n_embd, 4 * n_embd), nn.ReLU(),
-            nn.Linear(4 * n_embd, n_embd), nn.Dropout(dropout))
-
-    def forward(self, x):
-        return self.net(x)
-
-
-class Block(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.sa = MultiHead(n_head, n_embd // n_head)
-        self.ff = FeedForward()
-        self.ln1 = nn.LayerNorm(n_embd)
-        self.ln2 = nn.LayerNorm(n_embd)
-
-    def forward(self, x):
-        x = x + self.sa(self.ln1(x))
-        x = x + self.ff(self.ln2(x))
-        return x
-
-
-class LyricsLM(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.token_embedding = nn.Embedding(vocab_size, n_embd)
-        self.position_embedding = nn.Embedding(block_size, n_embd)
-        self.blocks = nn.Sequential(*[Block() for _ in range(n_layer)])
-        self.ln_f = nn.LayerNorm(n_embd)
-        self.head = nn.Linear(n_embd, vocab_size)
-
-    def forward(self, idx):
-        B, T = idx.shape
-        tok = self.token_embedding(idx)
-        pos = self.position_embedding(torch.arange(T, device=idx.device))
-        x = self.blocks(tok + pos)
-        x = self.ln_f(x)
-        return self.head(x)
+W = np.load(os.path.join(MODEL_DIR, "trained_weights.npz"))
 
 
 # ---------------------------------------------------------------------
-# Load trained weights once per cold start
+# NumPy building blocks — mirror the PyTorch model's forward pass
 # ---------------------------------------------------------------------
-model = LyricsLM().to(device)
-state = torch.load(os.path.join(MODEL_DIR, "trained.pt"), map_location="cpu")
-model.load_state_dict(state)
-model.eval()
+def layer_norm(x, weight, bias, eps=1e-5):
+    mean = x.mean(axis=-1, keepdims=True)
+    var = x.var(axis=-1, keepdims=True)
+    return (x - mean) / np.sqrt(var + eps) * weight + bias
+
+
+def linear(x, weight, bias=None):
+    # PyTorch nn.Linear stores weight as (out_features, in_features)
+    out = x @ weight.T
+    if bias is not None:
+        out = out + bias
+    return out
+
+
+def softmax(x, axis=-1):
+    x = x - np.max(x, axis=axis, keepdims=True)
+    e = np.exp(x)
+    return e / np.sum(e, axis=axis, keepdims=True)
+
+
+def relu(x):
+    return np.maximum(x, 0)
+
+
+def attention_head(x, block_idx, head_idx, T):
+    prefix = f"blocks.{block_idx}.sa.heads.{head_idx}"
+    k = linear(x, W[f"{prefix}.key.weight"])
+    q = linear(x, W[f"{prefix}.query.weight"])
+    v = linear(x, W[f"{prefix}.value.weight"])
+
+    wei = q @ k.transpose(0, 2, 1) * (k.shape[-1] ** -0.5)
+    mask = np.tril(np.ones((T, T)))
+    wei = np.where(mask == 0, -1e10, wei)
+    wei = softmax(wei, axis=-1)
+    return wei @ v
+
+
+def multi_head_attention(x, block_idx, T):
+    heads_out = [attention_head(x, block_idx, h, T) for h in range(n_head)]
+    out = np.concatenate(heads_out, axis=-1)
+    prefix = f"blocks.{block_idx}.sa"
+    return linear(out, W[f"{prefix}.proj.weight"], W[f"{prefix}.proj.bias"])
+
+
+def feed_forward(x, block_idx):
+    prefix = f"blocks.{block_idx}.ff.net"
+    x = linear(x, W[f"{prefix}.0.weight"], W[f"{prefix}.0.bias"])
+    x = relu(x)
+    x = linear(x, W[f"{prefix}.2.weight"], W[f"{prefix}.2.bias"])
+    return x
+
+
+def block_forward(x, block_idx, T):
+    ln1_w, ln1_b = W[f"blocks.{block_idx}.ln1.weight"], W[f"blocks.{block_idx}.ln1.bias"]
+    ln2_w, ln2_b = W[f"blocks.{block_idx}.ln2.weight"], W[f"blocks.{block_idx}.ln2.bias"]
+    x = x + multi_head_attention(layer_norm(x, ln1_w, ln1_b), block_idx, T)
+    x = x + feed_forward(layer_norm(x, ln2_w, ln2_b), block_idx)
+    return x
+
+
+def model_forward(idx):
+    B, T = idx.shape
+    tok_emb = W["token_embedding.weight"][idx]
+    pos_emb = W["position_embedding.weight"][:T]
+    x = tok_emb + pos_emb
+    for i in range(n_layer):
+        x = block_forward(x, i, T)
+    x = layer_norm(x, W["ln_f.weight"], W["ln_f.bias"])
+    logits = linear(x, W["head.weight"], W["head.bias"])
+    return logits
 
 
 def encode(s):
@@ -127,19 +117,18 @@ def decode(nums):
     return "".join(itos[n] for n in nums)
 
 
-@torch.no_grad()
 def generate(seed, max_new_tokens=200, temperature=0.8):
     seed_ids = encode(seed)
     if not seed_ids:
         return ""
-    idx = torch.tensor([seed_ids], dtype=torch.long, device=device)
+    idx = np.array([seed_ids], dtype=np.int64)
     for _ in range(max_new_tokens):
         idx_cond = idx[:, -block_size:]
-        logits = model(idx_cond)
+        logits = model_forward(idx_cond)
         logits = logits[:, -1, :] / max(temperature, 1e-4)
-        probs = F.softmax(logits, dim=-1)
-        nxt = torch.multinomial(probs, num_samples=1)
-        idx = torch.cat((idx, nxt), dim=1)
+        probs = softmax(logits, axis=-1)[0]
+        nxt = np.random.choice(len(probs), p=probs)
+        idx = np.concatenate([idx, np.array([[nxt]])], axis=1)
     return decode(idx[0].tolist())
 
 
@@ -153,7 +142,7 @@ app.add_middleware(
     allow_origins=[
         "https://lyricslm.brainbeam.ai",
         "https://lyricslm.pages.dev",
-        "http://localhost:8000",  # for local testing
+        "http://localhost:8000",
     ],
     allow_methods=["POST"],
     allow_headers=["*"],
@@ -168,7 +157,7 @@ class GenerateRequest(BaseModel):
 
 @app.post("/api/generate")
 def generate_endpoint(req: GenerateRequest):
-    max_tokens = min(max(req.max_new_tokens, 1), 300)  # clamp, avoid abuse
+    max_tokens = min(max(req.max_new_tokens, 1), 300)
     temperature = min(max(req.temperature, 0.1), 2.0)
     text = generate(req.seed, max_tokens, temperature)
     return {"text": text}
@@ -176,4 +165,5 @@ def generate_endpoint(req: GenerateRequest):
 
 @app.get("/api/generate")
 def health():
-    return {"status": "ok", "vocab_size": vocab_size, "params": sum(p.numel() for p in model.parameters())}
+    total_params = sum(arr.size for arr in W.values())
+    return {"status": "ok", "vocab_size": vocab_size, "params": int(total_params)}
