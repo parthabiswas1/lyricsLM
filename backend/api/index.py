@@ -117,18 +117,25 @@ def decode(nums):
     return "".join(itos[n] for n in nums)
 
 
-def generate(seed, max_new_tokens=200, temperature=0.8):
+def generate(seed, max_new_tokens=500, temperature=0.8, min_lines=4):
     seed_ids = encode(seed)
     if not seed_ids:
         return ""
     idx = np.array([seed_ids], dtype=np.int64)
+    lines_seen = 0
     for _ in range(max_new_tokens):
         idx_cond = idx[:, -block_size:]
         logits = model_forward(idx_cond)
         logits = logits[:, -1, :] / max(temperature, 1e-4)
         probs = softmax(logits, axis=-1)[0]
-        nxt = np.random.choice(len(probs), p=probs)
+        nxt = int(np.random.choice(len(probs), p=probs))
         idx = np.concatenate([idx, np.array([[nxt]])], axis=1)
+        # Stop cleanly once we've completed at least min_lines lines,
+        # instead of cutting off mid-word at a fixed character count.
+        if itos.get(nxt) == "\n":
+            lines_seen += 1
+            if lines_seen >= min_lines:
+                break
     return decode(idx[0].tolist())
 
 
@@ -157,7 +164,7 @@ class GenerateRequest(BaseModel):
 
 @app.post("/api/generate")
 def generate_endpoint(req: GenerateRequest):
-    max_tokens = min(max(req.max_new_tokens, 1), 300)
+    max_tokens = min(max(req.max_new_tokens, 1), 800)
     temperature = min(max(req.temperature, 0.1), 2.0)
     text = generate(req.seed, max_tokens, temperature)
     return {"text": text}

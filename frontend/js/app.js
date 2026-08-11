@@ -53,7 +53,7 @@ async function handleGenerate() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         seed,
-        max_new_tokens: 200,
+        max_new_tokens: 800,
         temperature: parseFloat(tempSlider.value),
       }),
     });
