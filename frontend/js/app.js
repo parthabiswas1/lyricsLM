@@ -1,7 +1,7 @@
 // lyricsLM front end — calls the server-side model instead of running
 // inference in the browser. Replace API_BASE with your deployed
 // Vercel backend URL once you have it.
-const API_BASE = 'https://lyricslm-api.vercel.app';
+const API_BASE = 'https://lyrics-lm.vercel.app';
 
 const chatLog = document.getElementById('chat-log');
 const seedInput = document.getElementById('seed-input');
