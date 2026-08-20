@@ -38,7 +38,7 @@ a { color: var(--green-deep); }
 
 .topbar {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   padding: 28px 0 18px;
   border-bottom: 1px solid var(--line);
@@ -52,12 +52,16 @@ a { color: var(--green-deep); }
   flex-wrap: wrap;
 }
 
-.brand-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+.brand-logo-link {
+  flex: none;
   display: block;
-  margin-right: 10px;
+  line-height: 0;
+}
+
+.brand-logo {
+  height: 38px;
+  width: auto;
+  display: block;
 }
 
 .brand-mark {
@@ -628,9 +632,8 @@ a { color: var(--green-deep); }
   color: var(--text-soft);
 }
 
-.corp-foot-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
+.corp-foot-logo {
+  height: 22px;
+  width: auto;
   display: block;
 }
