@@ -335,7 +335,7 @@ a { color: var(--green-deep); }
 
 .how-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
 }
 
@@ -423,6 +423,8 @@ a { color: var(--green-deep); }
   flex-wrap: wrap;
   margin-bottom: 8px;
 }
+
+.page > .landing-links { margin-top: 32px; }
 
 .landing-link {
   display: inline-flex;
